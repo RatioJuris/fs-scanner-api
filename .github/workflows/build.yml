@@ -78,7 +78,9 @@ jobs:
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@://github.com"
-        git add build/x64/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
+        
+        # CRITICAL FIX: -f forces git to accept tracking the ignored build folder files
+        git add -f build/x64/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
         
         if git diff-index --quiet HEAD --; then
           echo "No executable changes detected. Skipping repository write loop."
