@@ -37,7 +37,7 @@ jobs:
     - name: Compile Native Binary Engine (Unified Name Signature)
       shell: cmd
       run: |
-        cl.exe /EHsc /O2 /DUNICODE /D_UNICODE src/WiaScannerBridge.cpp staging/WiaScannerBridge.res /Festaging/WiaScannerBridge.exe /link ole32.lib oleaut32.lib uuid.lib wiaguid.lib
+        cl.exe /EHsc /O2 /std:c++17 /DUNICODE /D_UNICODE src/WiaScannerBridge.cpp staging/WiaScannerBridge.res /Festaging/WiaScannerBridge.exe /link ole32.lib oleaut32.lib uuid.lib wiaguid.lib sti.lib
 
     - name: Stash Compiled Binary for Collection Step
       uses: actions/upload-artifact@v4
