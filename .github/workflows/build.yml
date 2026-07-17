@@ -26,15 +26,18 @@ jobs:
         arch: ${{ matrix.architecture }}
 
     - name: Create Temporary Workspace Directory
+      shell: cmd
       run: mkdir staging
 
     - name: Compile Resource Script Metadata (Company Details)
+      shell: cmd
       run: |
         rc.exe /fo staging/WiaScannerBridge.res src/WiaScannerBridge.rc
 
     - name: Compile Native Binary Engine (Unified Name Signature)
+      shell: cmd
       run: |
-        cl.exe /EHsc /O2 /DUNICODE /D_UNICODE src/WiaScannerBridge.cpp staging/WiaScannerBridge.res /FE:staging/WiaScannerBridge.exe /link ole32.lib oleaut32.lib uuid.lib wiaguid.lib
+        cl.exe /EHsc /O2 /DUNICODE /D_UNICODE src/WiaScannerBridge.cpp staging/WiaScannerBridge.res /Festaging/WiaScannerBridge.exe /link ole32.lib oleaut32.lib uuid.lib wiaguid.lib
 
     - name: Stash Compiled Binary for Collection Step
       uses: actions/upload-artifact@v4
@@ -68,7 +71,6 @@ jobs:
       run: |
         mkdir -p build/x64
         mkdir -p build/x86
-        # Both files are saved with the exact identical expected file name signature
         cp temp-x64/WiaScannerBridge.exe build/x64/WiaScannerBridge.exe
         cp temp-x86/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
 
