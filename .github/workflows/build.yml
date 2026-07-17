@@ -2,89 +2,238 @@ name: Production Multi-Architecture Native Compilation
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+    paths:
+      - "src/WiaScannerBridge.cpp"
+      - "src/WiaScannerBridge.rc"
+      - ".github/workflows/native-build.yml"
+
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: native-wia-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-engines:
-    name: Compile Engine (${{ matrix.architecture }})
+    name: Compile WIA Engine (${{ matrix.architecture }})
     runs-on: windows-latest
+
     strategy:
+      fail-fast: false
       matrix:
-        architecture: [x64, x86]
+        architecture:
+          - x64
+          - x86
 
     steps:
-    - name: Checkout Code Repository
-      uses: actions/checkout@v4
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
 
-    - name: Setup MSVC Developer Command Prompt
-      uses: ilammy/msvc-dev-cmd@v1
-      with:
-        arch: ${{ matrix.architecture }}
+      - name: Setup MSVC Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.architecture }}
 
-    - name: Create Temporary Workspace Directory
-      shell: cmd
-      run: mkdir staging
+      - name: Create Temporary Workspace Directory
+        shell: cmd
+        run: |
+          if not exist staging mkdir staging
 
-    - name: Compile Resource Script Metadata (Company Details)
-      shell: cmd
-      run: |
-        rc.exe /fo staging/WiaScannerBridge.res src/WiaScannerBridge.rc
+      - name: Verify Source Files
+        shell: cmd
+        run: |
+          if not exist "src\WiaScannerBridge.cpp" (
+              echo ERROR: src\WiaScannerBridge.cpp is missing.
+              exit /b 1
+          )
 
-    - name: Compile Native Binary Engine (Unified Name Signature)
-      shell: cmd
-      run: |
-        cl.exe /EHsc /O2 /std:c++17 /DUNICODE /D_UNICODE src/WiaScannerBridge.cpp staging/WiaScannerBridge.res /Festaging/WiaScannerBridge.exe /link ole32.lib oleaut32.lib uuid.lib wiaguid.lib sti.lib
+          if not exist "src\WiaScannerBridge.rc" (
+              echo ERROR: src\WiaScannerBridge.rc is missing.
+              exit /b 1
+          )
 
-    - name: Stash Compiled Binary for Collection Step
-      uses: actions/upload-artifact@v4
-      with:
-        name: binary-${{ matrix.architecture }}
-        path: staging/WiaScannerBridge.exe
-        retention-days: 1
+          echo Source files verified.
+
+      - name: Compile Resource Metadata
+        shell: cmd
+        run: |
+          rc.exe /nologo ^
+            /fo "staging\WiaScannerBridge.res" ^
+            "src\WiaScannerBridge.rc"
+
+          if errorlevel 1 (
+              echo ERROR: Resource compilation failed.
+              exit /b 1
+          )
+
+          if not exist "staging\WiaScannerBridge.res" (
+              echo ERROR: Resource compiler did not create the RES file.
+              exit /b 1
+          )
+
+      - name: Compile Native WIA Bridge
+        shell: cmd
+        run: |
+          cl.exe ^
+            /nologo ^
+            /EHsc ^
+            /O2 ^
+            /W4 ^
+            /utf-8 ^
+            /std:c++17 ^
+            /DUNICODE ^
+            /D_UNICODE ^
+            "src\WiaScannerBridge.cpp" ^
+            "staging\WiaScannerBridge.res" ^
+            /Fe:"staging\WiaScannerBridge.exe" ^
+            /link ^
+            ole32.lib ^
+            oleaut32.lib ^
+            uuid.lib ^
+            wiaguid.lib
+
+          if errorlevel 1 (
+              echo ERROR: Native compilation failed.
+              exit /b 1
+          )
+
+          if not exist "staging\WiaScannerBridge.exe" (
+              echo ERROR: Compiler did not create WiaScannerBridge.exe.
+              exit /b 1
+          )
+
+      - name: Test Executable Help Command
+        shell: cmd
+        run: |
+          "staging\WiaScannerBridge.exe" --help
+
+          if errorlevel 1 (
+              echo ERROR: Executable help test failed.
+              exit /b 1
+          )
+
+      - name: Record Binary Architecture
+        shell: cmd
+        run: |
+          dumpbin.exe /headers "staging\WiaScannerBridge.exe" ^
+            | findstr /i "machine"
+
+      - name: Create SHA-256 Checksum
+        shell: powershell
+        run: |
+          $binary = "staging\WiaScannerBridge.exe"
+          $hash = (Get-FileHash -Path $binary -Algorithm SHA256).Hash
+
+          "$hash  WiaScannerBridge.exe" |
+              Out-File `
+                  -FilePath "staging\WiaScannerBridge.exe.sha256" `
+                  -Encoding ascii
+
+          Write-Host "SHA-256: $hash"
+
+      - name: Upload Compiled Binary Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WiaScannerBridge-${{ matrix.architecture }}
+          path: |
+            staging/WiaScannerBridge.exe
+            staging/WiaScannerBridge.exe.sha256
+          if-no-files-found: error
+          retention-days: 7
 
   commit-to-root:
-    name: Collect and Commit Binaries to Root Build Folders
-    needs: build-engines
+    name: Collect and Commit Native Binaries
+    needs:
+      - build-engines
+
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Code Repository
-      uses: actions/checkout@v4
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
-    - name: Download Compiled 64-bit Binary Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: binary-x64
-        path: temp-x64
+      - name: Download Compiled 64-bit Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WiaScannerBridge-x64
+          path: temp-x64
 
-    - name: Download Compiled 32-bit Binary Artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: binary-x86
-        path: temp-x86
+      - name: Download Compiled 32-bit Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WiaScannerBridge-x86
+          path: temp-x86
 
-    - name: Stage Executables into Root Build Directory
-      run: |
-        mkdir -p build/x64
-        mkdir -p build/x86
-        cp temp-x64/WiaScannerBridge.exe build/x64/WiaScannerBridge.exe
-        cp temp-x86/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
+      - name: Verify Downloaded Artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    - name: Automatically Commit Generated Binaries back to GitHub
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@://github.com"
-        
-        # CRITICAL FIX: -f forces git to accept tracking the ignored build folder files
-        git add -f build/x64/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
-        
-        if git diff-index --quiet HEAD --; then
-          echo "No executable changes detected. Skipping repository write loop."
-        else
-          git commit -m "Automated build: Updated 64-bit & 32-bit native scanner engines [skip ci]"
-          git push origin main
-        fi
+          test -s temp-x64/WiaScannerBridge.exe
+          test -s temp-x64/WiaScannerBridge.exe.sha256
+
+          test -s temp-x86/WiaScannerBridge.exe
+          test -s temp-x86/WiaScannerBridge.exe.sha256
+
+          echo "Downloaded artifacts verified."
+
+      - name: Stage Executables into Build Directories
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p build/x64
+          mkdir -p build/x86
+
+          cp \
+            temp-x64/WiaScannerBridge.exe \
+            build/x64/WiaScannerBridge.exe
+
+          cp \
+            temp-x64/WiaScannerBridge.exe.sha256 \
+            build/x64/WiaScannerBridge.exe.sha256
+
+          cp \
+            temp-x86/WiaScannerBridge.exe \
+            build/x86/WiaScannerBridge.exe
+
+          cp \
+            temp-x86/WiaScannerBridge.exe.sha256 \
+            build/x86/WiaScannerBridge.exe.sha256
+
+          ls -lh build/x64
+          ls -lh build/x86
+
+      - name: Commit Generated Binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f \
+            build/x64/WiaScannerBridge.exe \
+            build/x64/WiaScannerBridge.exe.sha256 \
+            build/x86/WiaScannerBridge.exe \
+            build/x86/WiaScannerBridge.exe.sha256
+
+          if git diff --cached --quiet; then
+            echo "No binary changes detected."
+            exit 0
+          fi
+
+          git commit \
+            -m "build: update x64 and x86 WIA scanner bridges [skip ci]"
+
+          git pull --rebase origin main
+          git push origin HEAD:main
