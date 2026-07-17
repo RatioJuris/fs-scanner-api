@@ -1,0 +1,86 @@
+name: Production Multi-Architecture Native Compilation
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-engines:
+    name: Compile Engine (${{ matrix.architecture }})
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        architecture: [x64, x86]
+
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Setup MSVC Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ matrix.architecture }}
+
+    - name: Create Temporary Workspace Directory
+      run: mkdir staging
+
+    - name: Compile Resource Script Metadata (Company Details)
+      run: |
+        rc.exe /fo staging/WiaScannerBridge.res src/WiaScannerBridge.rc
+
+    - name: Compile Native Binary Engine (Unified Name Signature)
+      run: |
+        cl.exe /EHsc /O2 /DUNICODE /D_UNICODE src/WiaScannerBridge.cpp staging/WiaScannerBridge.res /FE:staging/WiaScannerBridge.exe /link ole32.lib oleaut32.lib uuid.lib wiaguid.lib
+
+    - name: Stash Compiled Binary for Collection Step
+      uses: actions/upload-artifact@v4
+      with:
+        name: binary-${{ matrix.architecture }}
+        path: staging/WiaScannerBridge.exe
+        retention-days: 1
+
+  commit-to-root:
+    name: Collect and Commit Binaries to Root Build Folders
+    needs: build-engines
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Download Compiled 64-bit Binary Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: binary-x64
+        path: temp-x64
+
+    - name: Download Compiled 32-bit Binary Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: binary-x86
+        path: temp-x86
+
+    - name: Stage Executables into Root Build Directory
+      run: |
+        mkdir -p build/x64
+        mkdir -p build/x86
+        # Both files are saved with the exact identical expected file name signature
+        cp temp-x64/WiaScannerBridge.exe build/x64/WiaScannerBridge.exe
+        cp temp-x86/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
+
+    - name: Automatically Commit Generated Binaries back to GitHub
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@://github.com"
+        git add build/x64/WiaScannerBridge.exe build/x86/WiaScannerBridge.exe
+        
+        if git diff-index --quiet HEAD --; then
+          echo "No executable changes detected. Skipping repository write loop."
+        else
+          git commit -m "Automated build: Updated 64-bit & 32-bit native scanner engines [skip ci]"
+          git push origin main
+        fi
