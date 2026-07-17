@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <wia.h>
+#include <sti.h>
 #include <objidl.h>
 #include <propidl.h>
 #include <comdef.h>
